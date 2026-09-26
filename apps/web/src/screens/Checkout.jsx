@@ -23,8 +23,23 @@ function EmptyBag() {
 }
 
 export function Cart() {
-  const { cart, catalog, removeItem, changeQuantity, delivery, setDelivery } =
-    useStore();
+  const {
+    cart,
+    catalog,
+    removeItem,
+    changeQuantity,
+    delivery,
+    setDelivery,
+    hydrated,
+    pincode,
+    quote,
+  } = useStore();
+  if (!hydrated)
+    return (
+      <div className="wrap page empty-state">
+        <h1>Opening your bag…</h1>
+      </div>
+    );
   if (!cart.length) return <EmptyBag />;
   return (
     <div className="wrap page">
@@ -88,6 +103,15 @@ export function Cart() {
           </div>
           <div className="panel">
             <h2>When is the celebration?</h2>
+            {pincode && (
+              <p className="subtle">
+                Pincode {pincode}:{" "}
+                {quote?.available
+                  ? "delivery available"
+                  : "availability will be confirmed before payment"}
+                .
+              </p>
+            )}
             <div className="field-row">
               <div className="field">
                 <label htmlFor="bag-date">Preferred date</label>
@@ -147,17 +171,21 @@ export function Address() {
   const {
     cart,
     address,
-    setAddress,
     pincode,
     delivery,
-    setDelivery,
-    setPincode,
-    setQuote,
-    api,
+    checkDelivery,
+    saveCheckoutDetails,
     session,
+    hydrated,
   } = useStore();
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  if (!hydrated)
+    return (
+      <div className="wrap page empty-state">
+        <h1>Loading your delivery details…</h1>
+      </div>
+    );
   if (!cart.length) return <EmptyBag />;
   async function submit(event) {
     event.preventDefault();
@@ -170,25 +198,24 @@ export function Address() {
       return;
     }
     try {
-      const available = await api(
-        "/delivery?pincode=" + encodeURIComponent(data.pincode),
-      );
-      if (!available.available)
+      const available = await checkDelivery(data.pincode);
+      if (available.available === false)
         throw new Error("We can't deliver to this pincode yet.");
-      setPincode(data.pincode);
-      setQuote(available);
-      setAddress({
-        name: data.name,
-        phone: data.phone,
-        line1: data.line1,
-        line2: data.line2,
-        pincode: data.pincode,
-        city: data.city,
-        whatsapp: data.whatsapp === "on",
+      saveCheckoutDetails({
+        address: {
+          name: data.name,
+          phone: data.phone,
+          line1: data.line1,
+          line2: data.line2,
+          pincode: data.pincode,
+          city: data.city,
+          whatsapp: data.whatsapp === "on",
+        },
+        delivery: { date: data.date, slot: data.slot },
       });
-      setDelivery({ date: data.date, slot: data.slot });
       router.push(
-        session.authenticated && session.phone === data.phone
+        available.unverified ||
+          (session.authenticated && session.phone === data.phone)
           ? "/checkout"
           : "/login?next=%2Fcheckout",
       );
@@ -349,8 +376,10 @@ export function Checkout() {
     subtotal,
     session,
     api,
+    checkDelivery,
     clearCart,
     setReceipt,
+    hydrated,
   } = useStore();
   const [config, setConfig] = useState(null);
   const [feedback, setFeedback] = useState("");
@@ -362,6 +391,23 @@ export function Checkout() {
       .then(setConfig)
       .catch((error) => setFeedback(error.message));
   }, []);
+  useEffect(() => {
+    if (hydrated && address?.pincode && !quote?.available)
+      checkDelivery(address.pincode)
+        .then((result) => {
+          if (result.available === false)
+            setFeedback(
+              "Delivery isn't available to this pincode. Please edit your address.",
+            );
+        })
+        .catch((error) => setFeedback(error.message));
+  }, [hydrated, address?.pincode]);
+  if (!hydrated)
+    return (
+      <div className="wrap page empty-state">
+        <h1>Preparing checkout…</h1>
+      </div>
+    );
   if (!cart.length) return <EmptyBag />;
   if (!address || !delivery.date || !delivery.slot)
     return (
@@ -380,9 +426,9 @@ export function Checkout() {
       router.push("/login?next=%2Fcheckout");
       return;
     }
-    if (!config?.paymentsEnabled) {
+    if (!config?.paymentsEnabled || !quote?.available) {
       setFeedback(
-        "Online payment is not available yet. No charge has been made.",
+        "Payment and delivery availability must be confirmed before you pay. No charge has been made.",
       );
       return;
     }
@@ -622,9 +668,15 @@ export function Checkout() {
                   Online payment is unavailable until the store is activated.
                 </p>
               )}
+              {!quote?.available && (
+                <p className="subtle">
+                  Delivery availability is still unconfirmed.{" "}
+                  <Link href="/address">Check address</Link>
+                </p>
+              )}
               <button
                 className="button full"
-                disabled={busy || !config?.paymentsEnabled}
+                disabled={busy || !config?.paymentsEnabled || !quote?.available}
               >
                 {busy ? "Please wait…" : "Continue to Razorpay"}
               </button>

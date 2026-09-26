@@ -213,7 +213,7 @@ export function Shop() {
 export function Product() {
   const params = useSearchParams();
   const router = useRouter();
-  const { catalog, session, api, addItem } = useStore();
+  const { catalog, session, api, addItem, pincode, checkDelivery } = useStore();
   const product =
     catalog.find((item) => item.id === params.get("id")) || catalog[0];
   const [quantity, setQuantity] = useState(1);
@@ -225,6 +225,7 @@ export function Product() {
   const [file, setFile] = useState(null);
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deliveryPin, setDeliveryPin] = useState(pincode);
   const key = product.id;
   if (!product)
     return (
@@ -238,6 +239,11 @@ export function Product() {
     setFeedback("");
     setBusy(true);
     try {
+      const service = await checkDelivery(deliveryPin);
+      if (service.available === false)
+        throw new Error(
+          "Delivery isn't available to this pincode. Try another one.",
+        );
       let uploadId;
       if (product.photo) {
         if (!session.authenticated) {
@@ -396,6 +402,29 @@ export function Product() {
                 </label>
               ))}
             </div>
+            <div className="field-group">
+              <label htmlFor="product-pincode">Delivery pincode</label>
+              <input
+                id="product-pincode"
+                name="productPincode"
+                inputMode="numeric"
+                autoComplete="postal-code"
+                pattern="[1-9][0-9]{5}"
+                maxLength={6}
+                value={deliveryPin}
+                onChange={(event) => {
+                  setDeliveryPin(
+                    event.target.value.replace(/\D/g, "").slice(0, 6),
+                  );
+                  setFeedback("");
+                }}
+                placeholder="Enter 6-digit pincode"
+                required
+              />
+              <p className="subtle">
+                Delivery availability and charges are confirmed before payment.
+              </p>
+            </div>
             <div className="purchase-bar">
               <div className="quantity">
                 <button
@@ -414,8 +443,12 @@ export function Product() {
                   +
                 </button>
               </div>
-              <button className="button" disabled={busy}>
-                Add to bag <Icon name="bag" />
+              <button
+                className="button"
+                disabled={busy || !/^[1-9][0-9]{5}$/.test(deliveryPin)}
+              >
+                {busy ? "Checking delivery…" : "Continue to bag"}{" "}
+                <Icon name="arrow" />
               </button>
             </div>
             <p className="form-message" role="status">
