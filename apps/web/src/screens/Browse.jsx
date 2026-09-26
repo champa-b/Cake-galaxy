@@ -422,7 +422,9 @@ export function Product() {
                 required
               />
               <p className="subtle">
-                Delivery availability and charges are confirmed before payment.
+                {/^[1-9][0-9]{5}$/.test(deliveryPin)
+                  ? "Delivery availability and charges are confirmed before payment."
+                  : "Enter a 6-digit pincode to continue."}
               </p>
             </div>
             <div className="purchase-bar">
@@ -445,6 +447,7 @@ export function Product() {
               </div>
               <button
                 className="button"
+                aria-busy={busy}
                 disabled={busy || !/^[1-9][0-9]{5}$/.test(deliveryPin)}
               >
                 {busy ? "Checking delivery…" : "Continue to bag"}{" "}
