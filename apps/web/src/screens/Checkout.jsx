@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { money, sizeLabel, unitPrice } from "@cake-galaxy/catalog";
 import { useStore, Icon } from "../components/Storefront";
 import { Summary } from "../components/Products";
+import PhoneVerification from "../components/PhoneVerification";
 
 const apiRoot = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
 const slots = ["10 AM – 1 PM", "1 PM – 4 PM", "4 PM – 7 PM", "7 PM – 10 PM"];
@@ -859,6 +860,7 @@ export function Orders() {
   const [orders, setOrders] = useState([]);
   const [feedback, setFeedback] = useState("");
   const [requesting, setRequesting] = useState("");
+  const [phone, setPhone] = useState("");
   useEffect(() => {
     if (session.authenticated)
       api("/orders")

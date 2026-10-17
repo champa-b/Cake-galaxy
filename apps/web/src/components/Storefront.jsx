@@ -8,7 +8,7 @@ import { products as initialProducts, unitPrice } from "@cake-galaxy/catalog";
 const StoreContext = createContext(null);
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
 const basketKey = "cakegalaxy.basket.v2";
-const checkoutKey = "cakegalaxy.checkout.v1";
+const checkoutKey = "cakegalaxy.checkout.v2";
 
 export function useStore() {
   const store = useContext(StoreContext);
@@ -29,6 +29,7 @@ export function StoreProvider({ children }) {
   const [pincode, setPincode] = useState("");
   const [quote, setQuote] = useState(null);
   const [address, setAddress] = useState(null);
+  const [sender, setSender] = useState(null);
   const [delivery, setDelivery] = useState({ date: "", slot: "" });
   const [receipt, setReceipt] = useState(null);
 
@@ -91,6 +92,8 @@ export function StoreProvider({ children }) {
       if (available.available) {
         setPincode(pin);
         setQuote(available);
+      } else {
+        setQuote(null);
       }
       return available;
     } catch (error) {
@@ -132,8 +135,9 @@ export function StoreProvider({ children }) {
     }
     try {
       const saved = JSON.parse(sessionStorage.getItem(checkoutKey) || "null");
-      if (saved?.address?.pincode && saved?.delivery) {
+      if (saved?.address?.pincode && saved?.sender?.phone && saved?.delivery) {
         setAddress(saved.address);
+        setSender(saved.sender);
         setDelivery(saved.delivery);
         setPincode(saved.address.pincode);
       }
@@ -184,11 +188,13 @@ export function StoreProvider({ children }) {
       sessionStorage.removeItem(checkoutKey);
     } catch {}
     setAddress(null);
+    setSender(null);
     setDelivery({ date: "", slot: "" });
     setQuote(null);
   }
   function saveCheckoutDetails(details) {
     setAddress(details.address);
+    setSender(details.sender);
     setDelivery(details.delivery);
     setPincode(details.address.pincode);
     try {

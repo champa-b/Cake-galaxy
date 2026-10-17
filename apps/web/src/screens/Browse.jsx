@@ -13,6 +13,7 @@ import {
 } from "@cake-galaxy/catalog";
 import { Icon, useStore } from "../components/Storefront";
 import { ProductCard, SectionHeading } from "../components/Products";
+import PhoneVerification from "../components/PhoneVerification";
 
 export function Home() {
   const { catalog } = useStore();
@@ -226,6 +227,7 @@ export function Product() {
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
   const [deliveryPin, setDeliveryPin] = useState(pincode);
+  const [phone, setPhone] = useState("");
   const key = product.id;
   if (!product)
     return (
@@ -466,11 +468,14 @@ export function Product() {
 
 export function Custom() {
   const { session, api, pincode } = useStore();
-  const router = useRouter();
   const [sample, setSample] = useState("");
   const [file, setFile] = useState(null);
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [customPhone, setCustomPhone] = useState("");
+  useEffect(() => {
+    if (session.authenticated && !customPhone) setCustomPhone(session.phone);
+  }, [session.phone, session.authenticated]);
   async function submit(event) {
     event.preventDefault();
     setFeedback("");
