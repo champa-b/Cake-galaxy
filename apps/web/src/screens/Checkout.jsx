@@ -172,6 +172,7 @@ export function Address() {
   const {
     cart,
     address,
+    sender,
     pincode,
     delivery,
     checkDelivery,
@@ -179,8 +180,14 @@ export function Address() {
     session,
     hydrated,
   } = useStore();
+  const [senderPhone, setSenderPhone] = useState(
+    sender?.phone || session.phone || "",
+  );
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (session.authenticated && !senderPhone) setSenderPhone(session.phone);
+  }, [session.phone, session.authenticated]);
   if (!hydrated)
     return (
       <div className="wrap page empty-state">
@@ -188,24 +195,25 @@ export function Address() {
       </div>
     );
   if (!cart.length) return <EmptyBag />;
+
   async function submit(event) {
     event.preventDefault();
     setFeedback("");
-    setBusy(true);
-    const data = Object.fromEntries(new FormData(event.currentTarget));
-    if (!/^[6-9]\d{9}$/.test(data.phone)) {
-      setFeedback("Enter a valid 10-digit mobile number.");
-      setBusy(false);
+    if (!session.authenticated || session.phone !== senderPhone) {
+      setFeedback("Verify your mobile number before continuing.");
       return;
     }
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    setBusy(true);
     try {
       const available = await checkDelivery(data.pincode);
       if (available.available === false)
         throw new Error("We can't deliver to this pincode yet.");
       saveCheckoutDetails({
+        sender: { name: data.senderName.trim(), phone: senderPhone },
         address: {
-          name: data.name,
-          phone: data.phone,
+          name: data.recipientName.trim(),
+          phone: data.recipientPhone,
           line1: data.line1,
           line2: data.line2,
           pincode: data.pincode,
@@ -214,47 +222,81 @@ export function Address() {
         },
         delivery: { date: data.date, slot: data.slot },
       });
-      router.push(
-        available.unverified ||
-          (session.authenticated && session.phone === data.phone)
-          ? "/checkout"
-          : "/login?next=%2Fcheckout",
-      );
+      router.push("/checkout");
     } catch (error) {
       setFeedback(error.message);
     } finally {
       setBusy(false);
     }
   }
+
   return (
     <div className="wrap page">
-      <div className="checkout-layout">
+      <div className="page-heading">
         <div>
-          <div className="page-heading">
-            <h1>Where's the celebration?</h1>
-          </div>
-          <form className="panel" onSubmit={submit}>
+          <h1>Delivery details</h1>
+          <p>Tell us who is ordering and who will receive the cake.</p>
+        </div>
+      </div>
+      <div className="checkout-layout">
+        <form onSubmit={submit}>
+          <section className="panel checkout-section">
+            <h2>Your details</h2>
+            <p className="subtle">
+              We will use your verified number for this order, updates and My
+              orders.
+            </p>
+            <div className="field">
+              <label htmlFor="sender-name">Your name</label>
+              <input
+                id="sender-name"
+                name="senderName"
+                defaultValue={sender?.name || ""}
+                maxLength={80}
+                autoComplete="name"
+                required
+              />
+            </div>
+            <PhoneVerification
+              phone={senderPhone}
+              onPhoneChange={setSenderPhone}
+            />
+            <label className="check-label">
+              <input
+                name="whatsapp"
+                type="checkbox"
+                defaultChecked={address?.whatsapp}
+              />
+              Send order updates to your verified number on WhatsApp
+            </label>
+          </section>
+          <section className="panel checkout-section">
+            <h2>Recipient details</h2>
+            <p className="subtle">
+              Enter the person who will receive the cake. Their number can be
+              different from yours.
+            </p>
             <div className="field-row">
               <div className="field">
-                <label htmlFor="name">Recipient name</label>
+                <label htmlFor="recipient-name">Recipient name</label>
                 <input
-                  id="name"
-                  name="name"
-                  defaultValue={address?.name}
+                  id="recipient-name"
+                  name="recipientName"
+                  defaultValue={address?.name || ""}
                   maxLength={80}
                   required
                 />
               </div>
               <div className="field">
-                <label htmlFor="phone">Mobile number</label>
+                <label htmlFor="recipient-phone">Recipient mobile number</label>
                 <input
-                  id="phone"
-                  name="phone"
+                  id="recipient-phone"
+                  name="recipientPhone"
                   type="tel"
                   inputMode="numeric"
                   pattern="[6-9][0-9]{9}"
                   maxLength={10}
-                  defaultValue={address?.phone || session.phone}
+                  defaultValue={address?.phone || ""}
                   required
                 />
               </div>
@@ -280,7 +322,7 @@ export function Address() {
             </div>
             <div className="field-row">
               <div className="field">
-                <label htmlFor="pincode">Pincode</label>
+                <label htmlFor="pincode">Delivery pincode</label>
                 <input
                   id="pincode"
                   name="pincode"
@@ -302,6 +344,9 @@ export function Address() {
                 />
               </div>
             </div>
+          </section>
+          <section className="panel checkout-section">
+            <h2>Delivery time</h2>
             <div className="field-row">
               <div className="field">
                 <label htmlFor="date">Preferred delivery date</label>
@@ -328,22 +373,14 @@ export function Address() {
                 </select>
               </div>
             </div>
-            <label className="check-label">
-              <input
-                name="whatsapp"
-                type="checkbox"
-                defaultChecked={address?.whatsapp}
-              />
-              Send order updates to this number on WhatsApp
-            </label>
             <p className="form-message" role="status">
               {feedback}
             </p>
             <button className="button full" disabled={busy}>
               Review your order <Icon name="arrow" />
             </button>
-          </form>
-        </div>
+          </section>
+        </form>
         <Summary />
       </div>
     </div>
@@ -372,6 +409,7 @@ export function Checkout() {
   const {
     cart,
     address,
+    sender,
     delivery,
     quote,
     subtotal,
@@ -410,12 +448,22 @@ export function Checkout() {
       </div>
     );
   if (!cart.length) return <EmptyBag />;
-  if (!address || !delivery.date || !delivery.slot)
+  if (!address || !sender || !delivery.date || !delivery.slot)
     return (
       <div className="wrap page empty-state">
         <h1>Add delivery details first</h1>
         <Link href="/address" className="button">
-          Add address
+          Add delivery details
+        </Link>
+      </div>
+    );
+  if (!session.authenticated || session.phone !== sender.phone)
+    return (
+      <div className="wrap page empty-state">
+        <h1>Verify your number to continue</h1>
+        <p>Return to your delivery details and verify your mobile number.</p>
+        <Link href="/address" className="button">
+          Verify number
         </Link>
       </div>
     );
@@ -423,8 +471,8 @@ export function Checkout() {
   async function submit(event) {
     event.preventDefault();
     setFeedback("");
-    if (!session.authenticated || session.phone !== address.phone) {
-      router.push("/login?next=%2Fcheckout");
+    if (!session.authenticated || session.phone !== sender.phone) {
+      router.push("/address");
       return;
     }
     if (!config?.paymentsEnabled || !quote?.available) {
@@ -438,6 +486,7 @@ export function Checkout() {
     try {
       const fingerprint = JSON.stringify({
         cart,
+        sender,
         address,
         delivery,
         gstEnabled,
@@ -472,6 +521,7 @@ export function Checkout() {
               uploadId,
             }),
           ),
+          sender,
           address,
           delivery,
           preferredMethod: form.get("payment"),
@@ -510,7 +560,7 @@ export function Checkout() {
           currency: "INR",
           name: "Cake Galaxy",
           description: "Cake order " + data.reference,
-          prefill: { name: address.name, contact: "+91" + address.phone },
+          prefill: { name: sender.name, contact: "+91" + sender.phone },
           theme: { color: "#738874" },
           modal: {
             ondismiss: () =>
@@ -556,6 +606,12 @@ export function Checkout() {
           </div>
           <div className="panel checkout-address">
             <div>
+              <h2>Your details</h2>
+              <p>
+                <strong>{sender.name}</strong>
+                <br />
+                +91 {sender.phone} · Verified
+              </p>
               <h2>Delivering to</h2>
               <p>
                 <strong>{address.name}</strong>
@@ -693,121 +749,25 @@ export function Checkout() {
 export function Login() {
   const params = useSearchParams();
   const router = useRouter();
-  const { api, setSession, refreshSession } = useStore();
-  const [phone, setPhone] = useState("");
-  const [otp, setOtp] = useState("");
-  const [requestId, setRequestId] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const [busy, setBusy] = useState(false);
-  const next =
-    params.get("next")?.startsWith("/") && !params.get("next").startsWith("//")
-      ? params.get("next")
-      : "/orders";
-  async function submit(event) {
-    event.preventDefault();
-    setBusy(true);
-    setFeedback("");
-    try {
-      if (!requestId) {
-        const result = await api("/auth/otp", {
-          method: "POST",
-          body: { phone: "+91" + phone },
-        });
-        if (result.sent !== true || !result.requestId)
-          throw new Error("Couldn't send the code. Please try again.");
-        setRequestId(result.requestId);
-      } else {
-        const result = await api("/auth/verify", {
-          method: "POST",
-          body: { requestId, otp },
-        });
-        if (!result.authenticated)
-          throw new Error("Code couldn't be verified.");
-        setSession({ authenticated: true, phone, csrfToken: result.csrfToken });
-        await refreshSession();
-        router.replace(next);
-      }
-    } catch (error) {
-      setFeedback(error.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const requested = params.get("next") || "/orders";
+  const destination =
+    requested === "/checkout"
+      ? "/address"
+      : requested.startsWith("/") && !requested.startsWith("//")
+        ? requested
+        : "/orders";
+  useEffect(() => {
+    router.replace(destination);
+  }, [destination, router]);
   return (
-    <div className="wrap page">
-      <section className="auth-layout">
-        <div className="auth-photo">
-          <img src="/images/berry.jpg" alt="Floral celebration cake" />
-        </div>
-        <div className="auth-content">
-          <span className="overline">WELCOME TO CAKE GALAXY</span>
-          <h1>
-            {requestId ? "Just one more step." : "Good things start here."}
-          </h1>
-          <p>
-            {requestId
-              ? "Enter the code sent to +91 " + phone + "."
-              : "Sign in with your mobile number to save your orders and check out securely."}
-          </p>
-          <form onSubmit={submit}>
-            {requestId ? (
-              <>
-                <label htmlFor="otp">Verification code</label>
-                <input
-                  className="otp-input"
-                  id="otp"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  minLength={6}
-                  value={otp}
-                  onChange={(event) => setOtp(event.target.value)}
-                  required
-                />
-                <button className="button full" disabled={busy}>
-                  Verify & continue
-                </button>
-                <button
-                  className="text-link"
-                  type="button"
-                  onClick={() => {
-                    setRequestId("");
-                    setOtp("");
-                    setFeedback("");
-                  }}
-                >
-                  Use another number
-                </button>
-              </>
-            ) : (
-              <>
-                <label htmlFor="login-phone">Your mobile number</label>
-                <div className="phone-field">
-                  <span>+91</span>
-                  <input
-                    id="login-phone"
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel-national"
-                    pattern="[6-9][0-9]{9}"
-                    maxLength={10}
-                    value={phone}
-                    onChange={(event) => setPhone(event.target.value)}
-                    required
-                  />
-                </div>
-                <button className="button full" disabled={busy}>
-                  Send verification code
-                </button>
-              </>
-            )}
-            <p className="form-message" role="status">
-              {feedback}
-            </p>
-          </form>
-        </div>
-      </section>
+    <div className="wrap page empty-state">
+      <h1>Continue on this page</h1>
+      <p>
+        Phone verification now happens in your delivery details or My orders.
+      </p>
+      <Link href={destination} className="button">
+        Continue
+      </Link>
     </div>
   );
 }
@@ -892,11 +852,12 @@ export function Orders() {
   }
   if (!session.authenticated)
     return (
-      <div className="wrap page empty-state">
-        <h1>Sign in to see your orders</h1>
-        <Link href="/login?next=%2Forders" className="button">
-          Sign in
-        </Link>
+      <div className="wrap page">
+        <div className="orders-verification panel">
+          <h1>My orders</h1>
+          <p>Verify the number you used to place your order.</p>
+          <PhoneVerification phone={phone} onPhoneChange={setPhone} />
+        </div>
       </div>
     );
   return (
