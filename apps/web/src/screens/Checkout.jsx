@@ -424,7 +424,17 @@ export function Checkout() {
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
   const [gstEnabled, setGstEnabled] = useState(false);
+  const [payment, setPayment] = useState("upi");
   const attempt = useRef(null);
+  useEffect(() => {
+    api("/checkout/config")
+      .then((value) => {
+        setConfig(value);
+        if (value.testCodEnabled && !value.paymentsEnabled)
+          setPayment("test_cod");
+      })
+      .catch((error) => setFeedback(error.message));
+  }, [session.authenticated, session.phone]);
   useEffect(() => {
     api("/checkout/config")
       .then(setConfig)
@@ -475,9 +485,14 @@ export function Checkout() {
       router.push("/address");
       return;
     }
-    if (!config?.paymentsEnabled || !quote?.available) {
+    if (
+      !(payment === "test_cod"
+        ? config?.testCodEnabled
+        : config?.paymentsEnabled) ||
+      !quote?.available
+    ) {
       setFeedback(
-        "Payment and delivery availability must be confirmed before you pay. No charge has been made.",
+        "This payment option or delivery address isn't available. No charge has been made.",
       );
       return;
     }
@@ -489,6 +504,7 @@ export function Checkout() {
         sender,
         address,
         delivery,
+        payment,
         gstEnabled,
         gstin: form.get("gstin"),
         business: form.get("business"),
@@ -524,7 +540,7 @@ export function Checkout() {
           sender,
           address,
           delivery,
-          preferredMethod: form.get("payment"),
+          preferredMethod: payment,
           gst: gstEnabled
             ? {
                 gstin: form.get("gstin"),
@@ -536,13 +552,11 @@ export function Checkout() {
         },
       });
       if (
-        !data.orderId ||
         !data.reference ||
-        !Number.isSafeInteger(data.amount)
+        !Number.isSafeInteger(data.amount) ||
+        (payment !== "test_cod" && !data.orderId)
       )
-        throw new Error(
-          "Payment couldn't be prepared. No charge has been made.",
-        );
+        throw new Error("Order couldn't be prepared. No charge has been made.");
       const expected =
         subtotal +
         (quote?.available ? quote.deliveryFee : 0) +
@@ -551,6 +565,22 @@ export function Checkout() {
         throw new Error(
           "The order total has changed. Please review your bag and delivery details before paying.",
         );
+      if (payment === "test_cod") {
+        if (
+          data.status !== "confirmed" ||
+          data.order?.paymentStatus !== "test_cod"
+        )
+          throw new Error(
+            "Test order confirmation failed. Check My orders before retrying.",
+          );
+        setReceipt(data.order);
+        attempt.current = null;
+        clearCart();
+        router.push(
+          "/confirmation?reference=" + encodeURIComponent(data.reference),
+        );
+        return;
+      }
       await loadCheckout();
       const confirmation = await new Promise((resolve, reject) => {
         const payment = new window.Razorpay({
@@ -657,7 +687,9 @@ export function Checkout() {
                     type="radio"
                     name="payment"
                     value={id}
-                    defaultChecked={id === "upi"}
+                    checked={payment === id}
+                    onChange={() => setPayment(id)}
+                    disabled={!config?.paymentsEnabled}
                   />
                   <span>
                     <strong>{title}</strong>
@@ -665,8 +697,27 @@ export function Checkout() {
                   </span>
                 </label>
               ))}
+              {config?.testCodEnabled && (
+                <label className="payment-option">
+                  <input
+                    type="radio"
+                    name="payment"
+                    value="test_cod"
+                    checked={payment === "test_cod"}
+                    onChange={() => setPayment("test_cod")}
+                  />
+                  <span>
+                    <strong>Cash on delivery · Test only</strong>
+                    <small>
+                      No payment is collected. The order is marked as a test.
+                    </small>
+                  </span>
+                </label>
+              )}
               <p className="subtle">
-                Available payment methods are confirmed in Razorpay.
+                {payment === "test_cod"
+                  ? "Test orders do not generate invoices or WhatsApp updates."
+                  : "Available payment methods are confirmed in Razorpay."}
               </p>
             </div>
             <div className="panel">
@@ -720,7 +771,7 @@ export function Checkout() {
               <p className="form-message" role="status">
                 {feedback}
               </p>
-              {!config?.paymentsEnabled && (
+              {!config?.paymentsEnabled && payment !== "test_cod" && (
                 <p className="subtle">
                   Online payment is unavailable until the store is activated.
                 </p>
@@ -733,9 +784,19 @@ export function Checkout() {
               )}
               <button
                 className="button full"
-                disabled={busy || !config?.paymentsEnabled || !quote?.available}
+                disabled={
+                  busy ||
+                  !(payment === "test_cod"
+                    ? config?.testCodEnabled
+                    : config?.paymentsEnabled) ||
+                  !quote?.available
+                }
               >
-                {busy ? "Please wait…" : "Continue to Razorpay"}
+                {busy
+                  ? "Please wait…"
+                  : payment === "test_cod"
+                    ? "Place test order"
+                    : "Continue to Razorpay"}
               </button>
             </div>
           </form>
@@ -785,7 +846,11 @@ export function Confirmation() {
         .then((result) => setOrder(result.order))
         .catch((error) => setFeedback(error.message));
   }, [reference, session.authenticated]);
-  if (!order || order.reference !== reference || order.paymentStatus !== "paid")
+  if (
+    !order ||
+    order.reference !== reference ||
+    !["paid", "test_cod"].includes(order.paymentStatus)
+  )
     return (
       <div className="wrap page empty-state">
         <h1>Checking your order</h1>
@@ -799,10 +864,17 @@ export function Confirmation() {
     );
   return (
     <div className="wrap page empty-state">
-      <h1>Your order is confirmed</h1>
+      <h1>
+        {order.testOrder
+          ? "Your test order is confirmed"
+          : "Your order is confirmed"}
+      </h1>
       <p>
         Order {order.reference} · {money(order.amount)}
       </p>
+      {order.testOrder && (
+        <p>No payment was collected. This is a test order.</p>
+      )}
       <p>{order.deliveryLabel}</p>
       <button
         className="button"
@@ -877,6 +949,11 @@ export function Orders() {
                 {order.statusLabel || order.status} · {money(order.amount)}
               </p>
               <p className="subtle">{order.deliveryLabel}</p>
+              {order.testOrder && (
+                <p className="subtle">
+                  Test order · Cash on delivery · No payment collected
+                </p>
+              )}
               {order.paymentStatus === "paid" && (
                 <a
                   href={
@@ -892,7 +969,7 @@ export function Orders() {
                   Download invoice
                 </a>
               )}
-              {order.paymentStatus === "paid" &&
+              {["paid", "test_cod"].includes(order.paymentStatus) &&
                 order.status !== "delivered" &&
                 order.status !== "cancelled" && (
                   <button
